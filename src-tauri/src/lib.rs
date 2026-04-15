@@ -36,6 +36,84 @@ const DISMISS_COOLDOWN_SECS: u64 = 300;
 /// Gives the frontend webview time to mount and register Tauri event listeners.
 const STARTUP_GRACE_SECS: u64 = 2;
 
+// ─── Window threshold logic ──────────────────────────────────────────────────
+
+/// Returns true if at least `threshold` of the entries in `window` are `true`.
+/// Pure function — no side effects, easy to unit test.
+fn window_is_active(window: &std::collections::VecDeque<bool>, threshold: usize) -> bool {
+    window.iter().filter(|&&v| v).count() >= threshold
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::VecDeque;
+
+    fn make_window(values: &[bool]) -> VecDeque<bool> {
+        values.iter().copied().collect()
+    }
+
+    #[test]
+    fn empty_window_is_not_active() {
+        assert!(!window_is_active(&make_window(&[]), 4));
+    }
+
+    #[test]
+    fn below_threshold_is_not_active() {
+        // 3 out of 6 — below threshold of 4
+        assert!(!window_is_active(
+            &make_window(&[true, true, true, false, false, false]),
+            4
+        ));
+    }
+
+    #[test]
+    fn at_threshold_is_active() {
+        // exactly 4 out of 6
+        assert!(window_is_active(
+            &make_window(&[true, true, true, true, false, false]),
+            4
+        ));
+    }
+
+    #[test]
+    fn above_threshold_is_active() {
+        // 5 out of 6
+        assert!(window_is_active(
+            &make_window(&[true, true, true, true, true, false]),
+            4
+        ));
+    }
+
+    #[test]
+    fn full_active_window_is_active() {
+        assert!(window_is_active(
+            &make_window(&[true, true, true, true, true, true]),
+            4
+        ));
+    }
+
+    #[test]
+    fn all_false_is_not_active() {
+        assert!(!window_is_active(
+            &make_window(&[false, false, false, false, false, false]),
+            4
+        ));
+    }
+
+    #[test]
+    fn partial_window_under_threshold() {
+        // Window not yet full (only 2 ticks seen) — can't be active
+        assert!(!window_is_active(&make_window(&[true, true]), 4));
+    }
+
+    #[test]
+    fn partial_window_at_threshold() {
+        // Window not yet full but already at threshold — should be active
+        assert!(window_is_active(&make_window(&[true, true, true, true]), 4));
+    }
+}
+
 // ─── Tauri Commands ──────────────────────────────────────────────────────────
 
 /// Called by the frontend when the user approves recording.
@@ -279,13 +357,22 @@ fn load_upload_url() -> String {
 }
 
 /// URL to load in the main Kwillo WebView window.
-/// Override via %APPDATA%\audio_analyzer\config.json → "site_url".
+/// Always opens at /dashboard so the site's auth guard redirects unauthenticated
+/// users to /login and sends authenticated users straight to the app.
+/// Override the base domain via %APPDATA%\audio_analyzer\config.json → "site_url".
 fn load_site_url() -> String {
-    load_config()
+    let base = load_config()
         .get("site_url")
         .and_then(|v| v.as_str())
         .unwrap_or("http://localhost:5174")
-        .to_string()
+        .to_string();
+
+    if let Ok(mut url) = base.parse::<url::Url>() {
+        url.set_path("/dashboard");
+        url.to_string()
+    } else {
+        format!("{}/dashboard", base.trim_end_matches('/'))
+    }
 }
 
 // ─── App Entry ───────────────────────────────────────────────────────────────
@@ -301,7 +388,7 @@ pub fn run() {
             // ── Create the main Kwillo WebView window ─────────────────────
             let site_url = load_site_url();
             if let Ok(parsed_url) = site_url.parse::<url::Url>() {
-                WebviewWindowBuilder::new(
+                let kwillo_window = WebviewWindowBuilder::new(
                     app,
                     "kwillo",
                     WebviewUrl::External(parsed_url),
@@ -311,8 +398,18 @@ pub fn run() {
                 .min_inner_size(900.0, 600.0)
                 .resizable(true)
                 .visible(true)
-                .build()
-                .ok();
+                .build();
+
+                if let Ok(window) = kwillo_window {
+                    if let Some(icon) = app.default_window_icon() {
+                        let _ = window.set_icon(icon.clone());
+                    }
+                }
+            }
+
+            // ── Set icon for the config-defined 'popup' window ───────────
+            if let Some(window) = app.get_webview_window("popup") {
+                let _ = window.set_icon(app.default_window_icon().unwrap().clone());
             }
 
             start_poll_loop(app.handle().clone(), upload_url);
