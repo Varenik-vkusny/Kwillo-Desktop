@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/user/.claude/plugins/cache/claude-plugins-official/superpowers/5.0.7/skills/requesting-code-review/**)",
+      "Bash(rustup --version)",
+      "Bash(npm --version)",
+      "Bash(cargo tauri:*)",
+      "Bash(cargo install:*)",
+      "Bash(rustc --version)",
+      "Bash(npm create:*)",
+      "Bash(git -C \"C:/Users/user/Desktop/audio_analyzer\" log --oneline)",
+      "Bash(git -C /c/Users/user/Desktop/audio_analyzer show 71f2390:src-tauri/tauri.conf.json)",
+      "Bash(git -C /c/Users/user/Desktop/audio_analyzer show 71f2390:src-tauri/capabilities/default.json)",
+      "Bash(git -C /c/Users/user/Desktop/audio_analyzer show 71f2390:package.json)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\user\\Desktop\\audio_analyzer_tmp"
+    ]
+  }
+}
