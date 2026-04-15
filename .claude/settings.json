@@ -25,7 +25,21 @@
       "Bash(taskkill.exe /PID 28168 /F)",
       "Bash(python3)",
       "Bash(python3 test_upload.py)",
-      "Bash(cargo test:*)"
+      "Bash(cargo test:*)",
+      "Bash(rustup show:*)",
+      "Bash(where link.exe)",
+      "Read(//c/Program Files \\(x86\\)/Microsoft Visual Studio/**)",
+      "Read(//c/Program Files/Microsoft Visual Studio/**)",
+      "WebSearch",
+      "WebFetch(domain:news.ycombinator.com)",
+      "WebFetch(domain:forum.keyboardmaestro.com)",
+      "WebFetch(domain:www.cyberengage.org)",
+      "WebFetch(domain:svch0st.medium.com)",
+      "WebFetch(domain:davidarno.org)",
+      "WebFetch(domain:dfir.pubpub.org)",
+      "WebFetch(domain:gist.github.com)",
+      "WebFetch(domain:support.google.com)",
+      "WebFetch(domain:matthewvaneerde.wordpress.com)"
     ],
     "additionalDirectories": [
       "C:\\Users\\user\\Desktop\\audio_analyzer_tmp",

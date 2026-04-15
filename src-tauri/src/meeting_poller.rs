@@ -13,12 +13,14 @@ pub const MEETING_PROCESSES: &[(&str, &str)] = &[
 ];
 
 /// Browser process names that we inspect window titles of.
-pub const BROWSER_PROCESSES: &[&str] = &["chrome.exe", "msedge.exe", "firefox.exe"];
+pub const BROWSER_PROCESSES: &[&str] = &["chrome.exe", "msedge.exe", "firefox.exe", "brave.exe"];
 
 /// Window title substrings that indicate a browser meeting, mapped to display name.
+/// These are only checked AFTER mic activity is confirmed, so "Meet - " matching
+/// "Google Meet - Brave" (pre-join) is not a problem — no mic = no call.
 pub const BROWSER_TITLE_PATTERNS: &[(&str, &str)] = &[
-    (" - Google Meet", "Google Meet"),
     ("Meet - ", "Google Meet"),
+    (" - Google Meet", "Google Meet"),
     ("Microsoft Teams", "Microsoft Teams"),
     ("Zoom Meeting", "Zoom"),
     ("Webex", "Cisco Webex"),
@@ -116,9 +118,20 @@ mod tests {
     }
 
     #[test]
-    fn test_match_google_meet_prefix() {
+    fn test_match_google_meet_in_call() {
+        // When inside a call the title is "Meet - [name] - Brave"
         assert_eq!(
-            match_browser_title("Meet - Team Sync"),
+            match_browser_title("Meet - Team Sync - Brave"),
+            Some("Google Meet")
+        );
+    }
+
+    #[test]
+    fn test_match_google_meet_prejoin_title() {
+        // "Google Meet - Brave" (pre-join) also matches "Meet - " in the title —
+        // but in practice is filtered out by browser_with_active_mic() returning false.
+        assert_eq!(
+            match_browser_title("Google Meet - Brave"),
             Some("Google Meet")
         );
     }
@@ -186,6 +199,132 @@ pub mod windows_scan {
     };
     use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowTextW, IsWindowVisible};
 
+    /// Looks up the exe name for a given PID using a process snapshot.
+    fn get_process_name_by_pid(target_pid: u32) -> Option<String> {
+        unsafe {
+            let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).ok()?;
+            let mut entry = PROCESSENTRY32W {
+                dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+                ..Default::default()
+            };
+            if Process32FirstW(snapshot, &mut entry).is_ok() {
+                loop {
+                    if entry.th32ProcessID == target_pid {
+                        let end = entry
+                            .szExeFile
+                            .iter()
+                            .position(|&c| c == 0)
+                            .unwrap_or(entry.szExeFile.len());
+                        let name = String::from_utf16_lossy(&entry.szExeFile[..end]).to_string();
+                        let _ = windows::Win32::Foundation::CloseHandle(snapshot);
+                        return Some(name);
+                    }
+                    if Process32NextW(snapshot, &mut entry).is_err() {
+                        break;
+                    }
+                }
+            }
+            let _ = windows::Win32::Foundation::CloseHandle(snapshot);
+            None
+        }
+    }
+
+    /// Returns true if any browser process currently holds an active WASAPI
+    /// microphone capture session — the reliable signal that a call has started.
+    /// Browsers only open the capture device after the user clicks "Join".
+    pub fn browser_with_active_mic() -> bool {
+        let result = browser_with_active_mic_inner();
+        eprintln!("[MicDetect] browser_with_active_mic = {result}");
+        result
+    }
+
+    fn browser_with_active_mic_inner() -> bool {
+        use windows::Win32::Media::Audio::{
+            AudioSessionStateActive, IAudioSessionControl, IAudioSessionControl2,
+            IAudioSessionManager2, IMMDeviceEnumerator, MMDeviceEnumerator, eCapture, eConsole,
+        };
+        use windows::Win32::System::Com::{
+            CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED,
+        };
+        #[allow(unused_imports)]
+        use windows::core::Interface;
+
+        const BROWSERS: &[&str] =
+            &["chrome.exe", "brave.exe", "msedge.exe", "firefox.exe", "opera.exe"];
+
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+
+            let Ok(enumerator): Result<IMMDeviceEnumerator, _> =
+                CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
+            else {
+                eprintln!("[MicDetect] FAIL: CoCreateInstance IMMDeviceEnumerator");
+                return false;
+            };
+
+            let Ok(device) = enumerator.GetDefaultAudioEndpoint(eCapture, eConsole) else {
+                eprintln!("[MicDetect] FAIL: GetDefaultAudioEndpoint");
+                return false;
+            };
+
+            let Ok(manager): Result<IAudioSessionManager2, _> =
+                device.Activate(CLSCTX_ALL, None)
+            else {
+                eprintln!("[MicDetect] FAIL: Activate IAudioSessionManager2");
+                return false;
+            };
+
+            let Ok(sessions) = manager.GetSessionEnumerator() else {
+                eprintln!("[MicDetect] FAIL: GetSessionEnumerator");
+                return false;
+            };
+
+            let Ok(count) = sessions.GetCount() else {
+                eprintln!("[MicDetect] FAIL: GetCount");
+                return false;
+            };
+
+            eprintln!("[MicDetect] session count = {count}");
+
+            for i in 0..count {
+                let Ok(session): Result<IAudioSessionControl, _> = sessions.GetSession(i) else {
+                    eprintln!("[MicDetect] session {i}: GetSession failed");
+                    continue;
+                };
+
+                let state = session.GetState();
+                eprintln!("[MicDetect] session {i}: state = {state:?}");
+
+                if state.map_or(true, |s| s != AudioSessionStateActive) {
+                    continue;
+                }
+
+                let Ok(s2): Result<IAudioSessionControl2, _> = session.cast() else {
+                    eprintln!("[MicDetect] session {i}: cast to Control2 failed");
+                    continue;
+                };
+
+                // Note: NOT filtering IsSystemSoundsSession — in windows-rs both
+                // S_OK and S_FALSE map to Ok(()), so the check would wrongly skip
+                // all sessions. We rely on process name to identify browsers.
+
+                let Ok(pid) = s2.GetProcessId() else {
+                    eprintln!("[MicDetect] session {i}: GetProcessId failed");
+                    continue;
+                };
+
+                let name = get_process_name_by_pid(pid).unwrap_or_else(|| format!("pid:{pid}"));
+                eprintln!("[MicDetect] session {i}: ACTIVE pid={pid} name={name}");
+
+                if BROWSERS.contains(&name.to_ascii_lowercase().as_str()) {
+                    return true;
+                }
+            }
+
+            false
+        }
+    }
+
     /// Returns the exe names of all currently running processes.
     pub fn list_process_names() -> Vec<String> {
         let mut names = Vec::new();
@@ -244,26 +383,24 @@ pub mod windows_scan {
 
 /// Detects whether any meeting is currently active.
 /// Returns Some(platform_name) or None.
-/// Only compiled on Windows.
+///
+/// Detection is purely signal-based — no window title reading:
+/// 1. Native apps (Zoom, Teams, etc.) → detected by process name
+/// 2. Browser calls (Google Meet, etc.) → detected by WASAPI mic ownership.
+///    The browser opens the capture device only when the user clicks "Join",
+///    so this fires at exactly the right moment regardless of tab focus or URL.
 #[cfg(target_os = "windows")]
 pub fn detect_active_meeting() -> Option<String> {
     let processes = windows_scan::list_process_names();
 
-    // Check native meeting apps first
+    // 1. Native meeting apps — process name is unambiguous
     if let Some(platform) = find_meeting_in_processes(&processes) {
         return Some(platform);
     }
 
-    // Only scan window titles if a browser is running
-    let browser_running = processes
-        .iter()
-        .any(|p| BROWSER_PROCESSES.contains(&p.to_ascii_lowercase().as_str()));
-
-    if browser_running {
-        let titles = windows_scan::list_visible_window_titles();
-        if let Some(platform) = find_meeting_in_titles(&titles) {
-            return Some(platform);
-        }
+    // 2. Browser mic active = call in progress, no title check needed
+    if windows_scan::browser_with_active_mic() {
+        return Some("Meeting".to_string());
     }
 
     None

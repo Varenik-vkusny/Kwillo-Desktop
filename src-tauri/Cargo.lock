@@ -111,6 +111,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tokio",
+ "url",
  "uuid",
  "windows 0.58.0",
 ]

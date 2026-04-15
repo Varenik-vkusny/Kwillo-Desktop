@@ -10,6 +10,8 @@ export interface TauriEventHandlers {
   onUploadStarted?: EventCallback<void>;
   onUploadSuccess?: EventCallback<void>;
   onUploadFailed?: EventCallback<string>;
+  /** Fired when the backend auto-dismisses the permission dialog (timeout or meeting ended). */
+  onPermissionDismissed?: EventCallback<void>;
 }
 
 export function useTauriEvents(handlers: TauriEventHandlers) {
@@ -45,6 +47,10 @@ export function useTauriEvents(handlers: TauriEventHandlers) {
       unlisteners.push(
         listen<string>("upload-failed", (e) => cb(e.payload))
       );
+    }
+    if (handlers.onPermissionDismissed) {
+      const cb = handlers.onPermissionDismissed;
+      unlisteners.push(listen<void>("permission-dismissed", () => cb()));
     }
 
     return () => {

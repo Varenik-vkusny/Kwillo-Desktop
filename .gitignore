@@ -7,17 +7,48 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Node / Frontend
 node_modules
 dist
 dist-ssr
 *.local
 
-# Rust/Cargo
-src-tauri/target/
+# Environment files
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
 
-# Editor directories and files
+# Python (test-server)
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.pytest_cache/
+
+# Rust / Tauri
+src-tauri/target/
+src-tauri/gen/
+
+# IDE / Editor
 .vscode/*
 !.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/launch.json
 .idea
 .DS_Store
 *.suo
@@ -25,3 +56,7 @@ src-tauri/target/
 *.njsproj
 *.sln
 *.sw?
+.cursor/
+
+# Project Specific
+test-server/received/

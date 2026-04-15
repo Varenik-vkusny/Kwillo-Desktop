@@ -43,6 +43,11 @@ export default function App() {
       setUploadStatus("error");
       setErrorMessage(msg);
     },
+    // Backend auto-dismissed the dialog (meeting ended while prompt was open,
+    // or the 60-second timeout expired). Reset the UI to its idle state.
+    onPermissionDismissed: () => {
+      setView("hidden");
+    },
   });
 
   if (view === "hidden") return null;

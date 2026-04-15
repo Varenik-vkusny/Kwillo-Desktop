@@ -5,6 +5,15 @@ interface Props {
   onDismiss: () => void;
 }
 
+// Inline SVG icons — no external dependency needed
+const MicIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3Z"/>
+    <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+    <line x1="12" x2="12" y1="19" y2="22"/>
+  </svg>
+);
+
 export function PermissionDialog({ platform, onDismiss }: Props) {
   async function handleRecord() {
     try {
@@ -15,17 +24,30 @@ export function PermissionDialog({ platform, onDismiss }: Props) {
   }
 
   return (
-    <div style={styles.container}>
-      <div style={styles.card}>
-        <div style={styles.icon}>🎙</div>
-        <div style={styles.title}>Meeting detected</div>
-        <div style={styles.platform}>{platform}</div>
-        <div style={styles.subtitle}>Record audio for transcription?</div>
-        <div style={styles.buttons}>
-          <button style={styles.primaryBtn} onClick={handleRecord}>
+    <div style={S.root}>
+      <div className="kwillo-card" style={S.card}>
+        {/* Drag region — top strip so user can move the popup */}
+        <div data-tauri-drag-region style={S.dragZone} />
+
+        {/* Mic icon */}
+        <div style={S.iconWrap}>
+          <div style={S.iconRing} className="pulse-ring" />
+          <div style={S.iconCircle}>
+            <span style={{ color: "#0094e9" }}><MicIcon /></span>
+          </div>
+        </div>
+
+        {/* Texts */}
+        <div style={S.title}>Meeting detected</div>
+        <div style={S.platformBadge}>{platform}</div>
+        <div style={S.subtitle}>Record audio for this call?</div>
+
+        {/* Buttons */}
+        <div style={S.btnRow}>
+          <button style={S.primaryBtn} onClick={handleRecord}>
             Record
           </button>
-          <button style={styles.secondaryBtn} onClick={onDismiss}>
+          <button style={S.ghostBtn} onClick={onDismiss}>
             Skip
           </button>
         </div>
@@ -34,65 +56,111 @@ export function PermissionDialog({ platform, onDismiss }: Props) {
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  container: {
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
+const S: Record<string, React.CSSProperties> = {
+  root: {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     height: "100vh",
-    margin: 0,
-    background: "transparent",
-    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    padding: "8px",
   },
   card: {
-    background: "#1e1e2e",
-    borderRadius: 16,
-    padding: "28px 32px",
-    width: 360,
-    textAlign: "center",
-    boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+    background: "#0f1117",
+    borderRadius: 20,
     border: "1px solid rgba(255,255,255,0.08)",
+    boxShadow: "0 20px 60px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.04)",
+    padding: "28px 28px 24px",
+    width: "100%",
+    maxWidth: 360,
+    textAlign: "center",
+    position: "relative",
+    overflow: "hidden",
   },
-  icon: { fontSize: 36, marginBottom: 8 },
-  title: {
-    color: "#cdd6f4",
-    fontSize: 18,
-    fontWeight: 600,
-    marginBottom: 4,
+  dragZone: {
+    position: "absolute",
+    top: 0, left: 0, right: 0,
+    height: 36,
+    cursor: "grab",
   },
-  platform: {
-    color: "#89b4fa",
-    fontSize: 14,
-    marginBottom: 8,
-    fontWeight: 500,
-  },
-  subtitle: {
-    color: "#a6adc8",
-    fontSize: 14,
-    marginBottom: 24,
-  },
-  buttons: {
+  iconWrap: {
+    position: "relative",
     display: "flex",
-    gap: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 16,
+  },
+  iconRing: {
+    position: "absolute",
+    width: 52,
+    height: 52,
+    borderRadius: "50%",
+    border: "2px solid rgba(0,148,233,0.3)",
+  },
+  iconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    background: "rgba(0,148,233,0.08)",
+    border: "1px solid rgba(0,148,233,0.18)",
+    display: "flex",
+    alignItems: "center",
     justifyContent: "center",
   },
+  title: {
+    color: "#f8fafc",
+    fontSize: 16,
+    fontWeight: 700,
+    letterSpacing: "-0.03em",
+    marginBottom: 8,
+  },
+  platformBadge: {
+    display: "inline-block",
+    background: "rgba(0,148,233,0.1)",
+    border: "1px solid rgba(0,148,233,0.2)",
+    color: "#0094e9",
+    borderRadius: 6,
+    padding: "2px 10px",
+    fontSize: 11,
+    fontWeight: 700,
+    letterSpacing: "0.05em",
+    textTransform: "uppercase",
+    marginBottom: 14,
+  },
+  subtitle: {
+    color: "#525a72",
+    fontSize: 13,
+    fontWeight: 500,
+    marginBottom: 20,
+  },
+  btnRow: {
+    display: "flex",
+    gap: 8,
+  },
   primaryBtn: {
-    background: "#89b4fa",
-    color: "#1e1e2e",
+    flex: 1,
+    height: 38,
+    background: "#0094e9",
+    color: "#fff",
     border: "none",
-    borderRadius: 8,
-    padding: "10px 28px",
-    fontSize: 14,
+    borderRadius: 10,
+    fontSize: 13,
+    fontWeight: 700,
+    cursor: "pointer",
+    letterSpacing: "-0.01em",
+    transition: "background 0.15s, transform 0.1s",
+  },
+  ghostBtn: {
+    flex: 1,
+    height: 38,
+    background: "transparent",
+    color: "#525a72",
+    border: "1px solid rgba(255,255,255,0.08)",
+    borderRadius: 10,
+    fontSize: 13,
     fontWeight: 600,
     cursor: "pointer",
-  },
-  secondaryBtn: {
-    background: "transparent",
-    color: "#a6adc8",
-    border: "1px solid rgba(255,255,255,0.15)",
-    borderRadius: 8,
-    padding: "10px 28px",
-    fontSize: 14,
-    cursor: "pointer",
+    transition: "border-color 0.15s, color 0.15s",
   },
 };
