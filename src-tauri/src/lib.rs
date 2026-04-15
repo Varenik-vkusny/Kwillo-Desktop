@@ -216,8 +216,10 @@ fn start_poll_loop(app: AppHandle, upload_url: String) {
     std::thread::spawn(move || {
         let app_state = app.state::<AppState>();
 
-        // How many consecutive ticks we've seen a meeting while Idle.
-        let mut consecutive_detections: u32 = 0;
+        // Sliding window of the last WINDOW_SIZE detection ticks (true = meeting detected).
+        // We prompt only when enough ticks are Active — see window_is_active().
+        let mut detection_window: std::collections::VecDeque<bool> =
+            std::collections::VecDeque::with_capacity(WINDOW_SIZE);
         // How many consecutive ticks we've NOT seen a meeting while Recording.
         let mut missed_detections: u32 = 0;
         // When the PendingPermission state was entered (for timeout tracking).
@@ -239,35 +241,38 @@ fn start_poll_loop(app: AppHandle, upload_url: String) {
                 AppStatus::Idle => {
                     missed_detections = 0;
 
-                    match meeting_poller::detect_active_meeting() {
+                    let detected = meeting_poller::detect_active_meeting();
+
+                    // Slide the window: record whether this tick detected a meeting.
+                    detection_window.push_back(detected.is_some());
+                    if detection_window.len() > WINDOW_SIZE {
+                        detection_window.pop_front();
+                    }
+
+                    match detected {
                         Some(platform) => {
-                            if app_state.should_prompt(&platform, DISMISS_COOLDOWN_SECS) {
-                                consecutive_detections += 1;
+                            // Only prompt when the window has enough Active ticks AND
+                            // we're not in a dismiss cooldown for this platform.
+                            if window_is_active(&detection_window, ENTRY_THRESHOLD)
+                                && app_state.should_prompt(&platform, DISMISS_COOLDOWN_SECS)
+                            {
+                                // Clear window so stale ticks don't carry over into
+                                // the next detection cycle after this one ends.
+                                detection_window.clear();
+                                pending_since = Some(std::time::Instant::now());
 
-                                // Require N stable detections before prompting.
-                                // This avoids false positives from transient process
-                                // names or browser tab flickers during page loads.
-                                if consecutive_detections >= ENTRY_DEBOUNCE {
-                                    consecutive_detections = 0;
-                                    pending_since = Some(std::time::Instant::now());
+                                app_state.set_status(AppStatus::PendingPermission {
+                                    platform: platform.clone(),
+                                });
+                                app.emit("meeting-detected", platform).ok();
 
-                                    app_state.set_status(AppStatus::PendingPermission {
-                                        platform: platform.clone(),
-                                    });
-                                    app.emit("meeting-detected", platform).ok();
-
-                                    if let Some(window) = app.get_webview_window("popup") {
-                                        window.show().ok();
-                                        window.set_focus().ok();
-                                    }
+                                if let Some(window) = app.get_webview_window("popup") {
+                                    window.show().ok();
+                                    window.set_focus().ok();
                                 }
-                            } else {
-                                // In cooldown after "Skip" — don't count toward debounce
-                                consecutive_detections = 0;
                             }
                         }
                         None => {
-                            consecutive_detections = 0;
                             // Meeting is gone → clear the dismiss cooldown so the
                             // next time this platform is detected (new session) we
                             // will prompt again.
@@ -278,7 +283,6 @@ fn start_poll_loop(app: AppHandle, upload_url: String) {
 
                 // ── PendingPermission: user hasn't responded yet ───────────
                 AppStatus::PendingPermission { .. } => {
-                    consecutive_detections = 0;
                     missed_detections = 0;
 
                     let meeting_gone = meeting_poller::detect_active_meeting().is_none();
@@ -300,8 +304,6 @@ fn start_poll_loop(app: AppHandle, upload_url: String) {
 
                 // ── Recording: watch for the meeting to end ────────────────
                 AppStatus::Recording { .. } => {
-                    consecutive_detections = 0;
-
                     if meeting_poller::detect_active_meeting().is_none() {
                         missed_detections += 1;
                         if missed_detections >= EXIT_DEBOUNCE {
@@ -328,7 +330,6 @@ fn start_poll_loop(app: AppHandle, upload_url: String) {
 
                 // ── Uploading: let the upload finish, don't interfere ──────
                 AppStatus::Uploading => {
-                    consecutive_detections = 0;
                     missed_detections = 0;
                 }
             }
