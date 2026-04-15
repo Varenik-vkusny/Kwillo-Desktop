@@ -13,7 +13,7 @@ async def upload_audio(audio: UploadFile = File(...)):
     if not audio.filename:
         raise HTTPException(status_code=400, detail="No filename provided")
 
-    save_path = os.path.join(RECEIVED_DIR, audio.filename)
+    save_path = os.path.join(RECEIVED_DIR, os.path.basename(audio.filename))
     contents = await audio.read()
 
     with open(save_path, "wb") as f:
