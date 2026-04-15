@@ -1,51 +1,69 @@
 import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useTauriEvents } from "./hooks/useTauriEvents";
+import { PermissionDialog } from "./components/PermissionDialog";
+import { RecordingIndicator } from "./components/RecordingIndicator";
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+type AppView = "hidden" | "permission" | "recording" | "uploading";
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
+export default function App() {
+  const [view, setView] = useState<AppView>("hidden");
+  const [platform, setPlatform] = useState("");
+  const [uploadStatus, setUploadStatus] = useState<
+    "recording" | "uploading" | "success" | "error"
+  >("recording");
+  const [errorMessage, setErrorMessage] = useState<string | undefined>();
+
+  useTauriEvents({
+    onMeetingDetected: (p) => {
+      setPlatform(p);
+      setView("permission");
+    },
+    onMeetingEnded: () => {
+      setUploadStatus("uploading");
+    },
+    onRecordingStarted: (p) => {
+      setPlatform(p);
+      setUploadStatus("recording");
+      setView("recording");
+    },
+    onUploadStarted: () => {
+      setUploadStatus("uploading");
+    },
+    onUploadSuccess: () => {
+      setUploadStatus("success");
+      setTimeout(async () => {
+        setView("hidden");
+        const win = await getCurrentWindow();
+        await win.hide();
+      }, 2000);
+    },
+    onUploadFailed: (msg) => {
+      setUploadStatus("error");
+      setErrorMessage(msg);
+    },
+  });
+
+  if (view === "hidden") return null;
+
+  if (view === "permission") {
+    return (
+      <PermissionDialog
+        platform={platform}
+        onDismiss={async () => {
+          setView("hidden");
+          const win = await getCurrentWindow();
+          await win.hide();
+        }}
+      />
+    );
   }
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+    <RecordingIndicator
+      platform={platform}
+      status={uploadStatus}
+      errorMessage={errorMessage}
+    />
   );
 }
-
-export default App;

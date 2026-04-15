@@ -15,10 +15,21 @@
       "Bash(curl -s http://localhost:8080/health)",
       "Bash(echo \"fake mp3 data\")",
       "Bash(curl -s -X POST http://localhost:8080/upload -F 'audio=@/tmp/test_recording.mp3;type=audio/mpeg')",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Read(//c/tmp/**)",
+      "Bash(kill -9 29072 28168)",
+      "Bash(taskkill /F /IM python.exe)",
+      "Bash(python main.py)",
+      "Bash(netstat -ano)",
+      "Bash(taskkill /PID 28168 /F)",
+      "Bash(taskkill.exe /PID 28168 /F)",
+      "Bash(python3)",
+      "Bash(python3 test_upload.py)",
+      "Bash(cargo test:*)"
     ],
     "additionalDirectories": [
-      "C:\\Users\\user\\Desktop\\audio_analyzer_tmp"
+      "C:\\Users\\user\\Desktop\\audio_analyzer_tmp",
+      "\\tmp"
     ]
   }
 }
