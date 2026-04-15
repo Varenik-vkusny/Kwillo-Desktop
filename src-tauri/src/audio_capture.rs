@@ -16,6 +16,12 @@ pub struct AudioCapture {
     channels: u16,
 }
 
+// cpal::Stream contains a raw pointer that is !Send, but we gate all cross-thread
+// access through Arc<Mutex<Option<AudioCapture>>> and only touch the stream from
+// a single owner at a time, so this is safe.
+unsafe impl Send for AudioCapture {}
+unsafe impl Sync for AudioCapture {}
+
 impl AudioCapture {
     /// Start capturing system audio (WASAPI loopback) and encoding to MP3.
     /// Audio is written to `path` in real time.
