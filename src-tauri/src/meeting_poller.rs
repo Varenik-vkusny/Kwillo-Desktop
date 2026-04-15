@@ -244,8 +244,9 @@ pub mod windows_scan {
 
     fn browser_has_mic_session_inner() -> bool {
         use windows::Win32::Media::Audio::{
-            IAudioSessionControl, IAudioSessionControl2,
-            IAudioSessionManager2, IMMDeviceEnumerator, MMDeviceEnumerator, eCapture, eConsole,
+            DEVICE_STATE_ACTIVE, IAudioSessionControl, IAudioSessionControl2,
+            IAudioSessionManager2, IMMDeviceCollection, IMMDeviceEnumerator,
+            MMDeviceEnumerator, eCapture,
         };
         use windows::Win32::System::Com::{
             CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED,
@@ -266,56 +267,59 @@ pub mod windows_scan {
                 return false;
             };
 
-            let Ok(device) = enumerator.GetDefaultAudioEndpoint(eCapture, eConsole) else {
-                eprintln!("[MicDetect] FAIL: GetDefaultAudioEndpoint");
-                return false;
-            };
-
-            let Ok(manager): Result<IAudioSessionManager2, _> =
-                device.Activate(CLSCTX_ALL, None)
+            // Enumerate ALL active capture endpoints, not just the default.
+            // Browsers often capture from a non-default device (headset, USB mic,
+            // virtual mic) — the default endpoint lookup would miss those sessions.
+            let Ok(collection): Result<IMMDeviceCollection, _> =
+                enumerator.EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE)
             else {
-                eprintln!("[MicDetect] FAIL: Activate IAudioSessionManager2");
+                eprintln!("[MicDetect] FAIL: EnumAudioEndpoints");
                 return false;
             };
 
-            let Ok(sessions) = manager.GetSessionEnumerator() else {
-                eprintln!("[MicDetect] FAIL: GetSessionEnumerator");
+            let Ok(device_count) = collection.GetCount() else {
+                eprintln!("[MicDetect] FAIL: collection GetCount");
                 return false;
             };
 
-            let Ok(count) = sessions.GetCount() else {
-                eprintln!("[MicDetect] FAIL: GetCount");
-                return false;
-            };
+            eprintln!("[MicDetect] capture endpoint count = {device_count}");
 
-            eprintln!("[MicDetect] session count = {count}");
+            for d in 0..device_count {
+                let Ok(device) = collection.Item(d) else { continue; };
 
-            for i in 0..count {
-                let Ok(session): Result<IAudioSessionControl, _> = sessions.GetSession(i) else {
-                    eprintln!("[MicDetect] session {i}: GetSession failed");
+                let Ok(manager): Result<IAudioSessionManager2, _> =
+                    device.Activate(CLSCTX_ALL, None)
+                else {
                     continue;
                 };
 
-                let Ok(s2): Result<IAudioSessionControl2, _> = session.cast() else {
-                    eprintln!("[MicDetect] session {i}: cast to Control2 failed");
-                    continue;
-                };
+                let Ok(sessions) = manager.GetSessionEnumerator() else { continue; };
+                let Ok(count) = sessions.GetCount() else { continue; };
 
-                // Note: NOT filtering IsSystemSoundsSession — in windows-rs both
-                // S_OK and S_FALSE map to Ok(()), so the check would wrongly skip
-                // all sessions. We rely on process name to identify browsers.
+                eprintln!("[MicDetect] endpoint {d}: session count = {count}");
 
-                let Ok(pid) = s2.GetProcessId() else {
-                    eprintln!("[MicDetect] session {i}: GetProcessId failed");
-                    continue;
-                };
+                for i in 0..count {
+                    let Ok(session): Result<IAudioSessionControl, _> = sessions.GetSession(i)
+                    else {
+                        continue;
+                    };
 
-                let name = get_process_name_by_pid(pid).unwrap_or_else(|| format!("pid:{pid}"));
-                let state = session.GetState().ok();
-                eprintln!("[MicDetect] session {i}: pid={pid} name={name} state={state:?}");
+                    let Ok(s2): Result<IAudioSessionControl2, _> = session.cast() else {
+                        continue;
+                    };
 
-                if BROWSERS.contains(&name.to_ascii_lowercase().as_str()) {
-                    return true;
+                    let Ok(pid) = s2.GetProcessId() else { continue; };
+
+                    let name =
+                        get_process_name_by_pid(pid).unwrap_or_else(|| format!("pid:{pid}"));
+                    let state = session.GetState().ok();
+                    eprintln!(
+                        "[MicDetect] endpoint {d} session {i}: pid={pid} name={name} state={state:?}"
+                    );
+
+                    if BROWSERS.contains(&name.to_ascii_lowercase().as_str()) {
+                        return true;
+                    }
                 }
             }
 
