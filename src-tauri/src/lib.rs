@@ -17,9 +17,14 @@ type CaptureHandle = Arc<Mutex<Option<AudioCapture>>>;
 
 // ─── Poll loop constants ─────────────────────────────────────────────────────
 
-/// Consecutive detections required before showing the permission prompt.
-/// Mic-based detection is a hard signal (no false positives), so 1 tick is enough.
-const ENTRY_DEBOUNCE: u32 = 1;
+/// Number of ticks in the sliding entry-detection window.
+/// 6 ticks × 2 s = 12-second observation window.
+const WINDOW_SIZE: usize = 6;
+
+/// Minimum number of Active ticks within the window required to show the prompt.
+/// 4 of 6 (~66%) tolerates natural mic silence during a real call while
+/// filtering out brief ambient activations that only last 1–2 ticks.
+const ENTRY_THRESHOLD: usize = 4;
 
 /// Consecutive missed detections before auto-stopping a recording.
 /// 3 ticks × 2s = 6 seconds grace for brief network/mic drops.
