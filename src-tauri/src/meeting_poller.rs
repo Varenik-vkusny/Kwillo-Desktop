@@ -229,18 +229,22 @@ pub mod windows_scan {
         }
     }
 
-    /// Returns true if any browser process currently holds an active WASAPI
-    /// microphone capture session — the reliable signal that a call has started.
-    /// Browsers only open the capture device after the user clicks "Join".
-    pub fn browser_with_active_mic() -> bool {
-        let result = browser_with_active_mic_inner();
-        eprintln!("[MicDetect] browser_with_active_mic = {result}");
+    /// Returns true if any browser process currently holds an open WASAPI
+    /// microphone capture session — regardless of Active/Inactive state.
+    ///
+    /// A browser opens the capture endpoint when the user joins a call and
+    /// holds it for the entire session. Checking for session existence (not
+    /// Active state) is more reliable than checking Active state, which only
+    /// fires when audio is literally flowing (i.e. during speech, not silence).
+    pub fn browser_has_mic_session() -> bool {
+        let result = browser_has_mic_session_inner();
+        eprintln!("[MicDetect] browser_has_mic_session = {result}");
         result
     }
 
-    fn browser_with_active_mic_inner() -> bool {
+    fn browser_has_mic_session_inner() -> bool {
         use windows::Win32::Media::Audio::{
-            AudioSessionStateActive, IAudioSessionControl, IAudioSessionControl2,
+            IAudioSessionControl, IAudioSessionControl2,
             IAudioSessionManager2, IMMDeviceEnumerator, MMDeviceEnumerator, eCapture, eConsole,
         };
         use windows::Win32::System::Com::{
@@ -292,13 +296,6 @@ pub mod windows_scan {
                     continue;
                 };
 
-                let state = session.GetState();
-                eprintln!("[MicDetect] session {i}: state = {state:?}");
-
-                if state.map_or(true, |s| s != AudioSessionStateActive) {
-                    continue;
-                }
-
                 let Ok(s2): Result<IAudioSessionControl2, _> = session.cast() else {
                     eprintln!("[MicDetect] session {i}: cast to Control2 failed");
                     continue;
@@ -314,7 +311,8 @@ pub mod windows_scan {
                 };
 
                 let name = get_process_name_by_pid(pid).unwrap_or_else(|| format!("pid:{pid}"));
-                eprintln!("[MicDetect] session {i}: ACTIVE pid={pid} name={name}");
+                let state = session.GetState().ok();
+                eprintln!("[MicDetect] session {i}: pid={pid} name={name} state={state:?}");
 
                 if BROWSERS.contains(&name.to_ascii_lowercase().as_str()) {
                     return true;
@@ -398,8 +396,11 @@ pub fn detect_active_meeting() -> Option<String> {
         return Some(platform);
     }
 
-    // 2. Browser mic active = call in progress, no title check needed
-    if windows_scan::browser_with_active_mic() {
+    // 2. Browser holds an open mic capture session = call in progress.
+    //    We check for session existence (not Active state) because browsers
+    //    keep the mic endpoint open for the entire call — Active/Inactive only
+    //    reflects whether audio is literally flowing at this instant.
+    if windows_scan::browser_has_mic_session() {
         return Some("Meeting".to_string());
     }
 

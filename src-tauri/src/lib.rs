@@ -199,7 +199,7 @@ fn debug_detection() -> serde_json::Value {
     #[cfg(target_os = "windows")]
     {
         use meeting_poller::windows_scan;
-        let mic_active = windows_scan::browser_with_active_mic();
+        let mic_active = windows_scan::browser_has_mic_session();
         let meeting = meeting_poller::detect_active_meeting();
         serde_json::json!({
             "browser_mic_active": mic_active,
