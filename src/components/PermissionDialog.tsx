@@ -14,15 +14,6 @@ export function PermissionDialog({ platform, onDismiss }: Props) {
     }
   }
 
-  async function handleSkip() {
-    try {
-      await invoke("dismiss_recording");
-    } catch (e) {
-      console.error("dismiss_recording failed:", e);
-    }
-    onDismiss();
-  }
-
   return (
     <div style={styles.container}>
       <div style={styles.card}>
@@ -34,7 +25,7 @@ export function PermissionDialog({ platform, onDismiss }: Props) {
           <button style={styles.primaryBtn} onClick={handleRecord}>
             Record
           </button>
-          <button style={styles.secondaryBtn} onClick={handleSkip}>
+          <button style={styles.secondaryBtn} onClick={onDismiss}>
             Skip
           </button>
         </div>

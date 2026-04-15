@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useTauriEvents } from "./hooks/useTauriEvents";
 import { PermissionDialog } from "./components/PermissionDialog";
@@ -51,6 +52,7 @@ export default function App() {
       <PermissionDialog
         platform={platform}
         onDismiss={async () => {
+          try { await invoke("dismiss_recording"); } catch {}
           setView("hidden");
           const win = await getCurrentWindow();
           await win.hide();
