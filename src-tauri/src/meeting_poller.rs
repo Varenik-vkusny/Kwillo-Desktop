@@ -174,3 +174,97 @@ mod tests {
         );
     }
 }
+
+// ─── Windows API integration ────────────────────────────────────────────────
+
+#[cfg(target_os = "windows")]
+pub mod windows_scan {
+    use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowTextW, IsWindowVisible};
+
+    /// Returns the exe names of all currently running processes.
+    pub fn list_process_names() -> Vec<String> {
+        let mut names = Vec::new();
+        unsafe {
+            let snapshot = match CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) {
+                Ok(h) => h,
+                Err(_) => return names,
+            };
+
+            let mut entry = PROCESSENTRY32W::default();
+            entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+
+            if Process32FirstW(snapshot, &mut entry).is_ok() {
+                loop {
+                    let end = entry
+                        .szExeFile
+                        .iter()
+                        .position(|&c| c == 0)
+                        .unwrap_or(entry.szExeFile.len());
+                    let name = String::from_utf16_lossy(&entry.szExeFile[..end]);
+                    names.push(name);
+
+                    if Process32NextW(snapshot, &mut entry).is_err() {
+                        break;
+                    }
+                }
+            }
+            let _ = windows::Win32::Foundation::CloseHandle(snapshot);
+        }
+        names
+    }
+
+    /// Returns titles of all visible top-level windows.
+    pub fn list_visible_window_titles() -> Vec<String> {
+        let mut titles: Vec<String> = Vec::new();
+        let ptr = &mut titles as *mut Vec<String> as isize;
+
+        unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+            let titles = &mut *(lparam.0 as *mut Vec<String>);
+            if IsWindowVisible(hwnd).as_bool() {
+                let mut buf = [0u16; 512];
+                let len = GetWindowTextW(hwnd, &mut buf);
+                if len > 0 {
+                    titles.push(String::from_utf16_lossy(&buf[..len as usize]).to_string());
+                }
+            }
+            BOOL(1)
+        }
+
+        unsafe {
+            let _ = EnumWindows(Some(enum_proc), LPARAM(ptr));
+        }
+        titles
+    }
+}
+
+/// Detects whether any meeting is currently active.
+/// Returns Some(platform_name) or None.
+/// Only compiled on Windows.
+#[cfg(target_os = "windows")]
+pub fn detect_active_meeting() -> Option<String> {
+    let processes = windows_scan::list_process_names();
+
+    // Check native meeting apps first
+    if let Some(platform) = find_meeting_in_processes(&processes) {
+        return Some(platform);
+    }
+
+    // Only scan window titles if a browser is running
+    let browser_running = processes
+        .iter()
+        .any(|p| BROWSER_PROCESSES.contains(&p.to_ascii_lowercase().as_str()));
+
+    if browser_running {
+        let titles = windows_scan::list_visible_window_titles();
+        if let Some(platform) = find_meeting_in_titles(&titles) {
+            return Some(platform);
+        }
+    }
+
+    None
+}
