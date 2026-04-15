@@ -273,6 +273,7 @@ fn start_poll_loop(app: AppHandle, upload_url: String) {
                             }
                         }
                         None => {
+                            detection_window.clear();
                             // Meeting is gone → clear the dismiss cooldown so the
                             // next time this platform is detected (new session) we
                             // will prompt again.
