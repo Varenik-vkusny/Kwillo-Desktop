@@ -11,7 +11,11 @@
       "Bash(git -C \"C:/Users/user/Desktop/audio_analyzer\" log --oneline)",
       "Bash(git -C /c/Users/user/Desktop/audio_analyzer show 71f2390:src-tauri/tauri.conf.json)",
       "Bash(git -C /c/Users/user/Desktop/audio_analyzer show 71f2390:src-tauri/capabilities/default.json)",
-      "Bash(git -C /c/Users/user/Desktop/audio_analyzer show 71f2390:package.json)"
+      "Bash(git -C /c/Users/user/Desktop/audio_analyzer show 71f2390:package.json)",
+      "Bash(curl -s http://localhost:8080/health)",
+      "Bash(echo \"fake mp3 data\")",
+      "Bash(curl -s -X POST http://localhost:8080/upload -F 'audio=@/tmp/test_recording.mp3;type=audio/mpeg')",
+      "Read(//tmp/**)"
     ],
     "additionalDirectories": [
       "C:\\Users\\user\\Desktop\\audio_analyzer_tmp"
