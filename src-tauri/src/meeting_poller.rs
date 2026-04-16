@@ -199,132 +199,73 @@ pub mod windows_scan {
     };
     use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowTextW, IsWindowVisible};
 
-    /// Looks up the exe name for a given PID using a process snapshot.
-    fn get_process_name_by_pid(target_pid: u32) -> Option<String> {
-        unsafe {
-            let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).ok()?;
-            let mut entry = PROCESSENTRY32W {
-                dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
-                ..Default::default()
-            };
-            if Process32FirstW(snapshot, &mut entry).is_ok() {
-                loop {
-                    if entry.th32ProcessID == target_pid {
-                        let end = entry
-                            .szExeFile
-                            .iter()
-                            .position(|&c| c == 0)
-                            .unwrap_or(entry.szExeFile.len());
-                        let name = String::from_utf16_lossy(&entry.szExeFile[..end]).to_string();
-                        let _ = windows::Win32::Foundation::CloseHandle(snapshot);
-                        return Some(name);
-                    }
-                    if Process32NextW(snapshot, &mut entry).is_err() {
-                        break;
-                    }
-                }
-            }
-            let _ = windows::Win32::Foundation::CloseHandle(snapshot);
-            None
-        }
-    }
-
-    /// Returns true if any browser process currently holds an open WASAPI
-    /// microphone capture session — regardless of Active/Inactive state.
+    /// Returns lowercase exe names of all processes currently holding the
+    /// microphone open, as reported by the Windows Privacy Consent Store.
     ///
-    /// A browser opens the capture endpoint when the user joins a call and
-    /// holds it for the entire session. Checking for session existence (not
-    /// Active state) is more reliable than checking Active state, which only
-    /// fires when audio is literally flowing (i.e. during speech, not silence).
-    pub fn browser_has_mic_session() -> bool {
-        let result = browser_has_mic_session_inner();
-        eprintln!("[MicDetect] browser_has_mic_session = {result}");
-        result
-    }
+    /// Registry path (per-user, desktop apps):
+    ///   HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\
+    ///   CapabilityAccessManager\ConsentStore\microphone\NonPackaged\<exe_path>
+    ///
+    /// Windows sets LastUsedTimeStop = 0 when a process opens the mic and
+    /// records the stop FILETIME when it closes it. All-zero stop = active now.
+    /// This is an OS-level signal: device-agnostic, process-precise, no audio
+    /// stream needed.
+    pub fn active_mic_processes_registry() -> Vec<String> {
+        use winreg::enums::HKEY_CURRENT_USER;
+        use winreg::RegKey;
 
-    fn browser_has_mic_session_inner() -> bool {
-        use windows::Win32::Media::Audio::{
-            DEVICE_STATE_ACTIVE, IAudioSessionControl, IAudioSessionControl2,
-            IAudioSessionManager2, IMMDeviceCollection, IMMDeviceEnumerator,
-            MMDeviceEnumerator, eCapture,
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let Ok(mic_key) = hkcu.open_subkey(
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\NonPackaged",
+        ) else {
+            eprintln!("[MicDetect] registry: mic consent key not found");
+            return Vec::new();
         };
-        use windows::Win32::System::Com::{
-            CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED,
-        };
-        #[allow(unused_imports)]
-        use windows::core::Interface;
 
-        const BROWSERS: &[&str] =
-            &["chrome.exe", "brave.exe", "msedge.exe", "firefox.exe", "opera.exe"];
+        let mut result = Vec::new();
 
-        unsafe {
-            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-
-            let Ok(enumerator): Result<IMMDeviceEnumerator, _> =
-                CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
-            else {
-                eprintln!("[MicDetect] FAIL: CoCreateInstance IMMDeviceEnumerator");
-                return false;
+        for subkey_name in mic_key.enum_keys().filter_map(|k| k.ok()) {
+            let Ok(subkey) = mic_key.open_subkey(&subkey_name) else {
+                continue;
             };
 
-            // Enumerate ALL active capture endpoints, not just the default.
-            // Browsers often capture from a non-default device (headset, USB mic,
-            // virtual mic) — the default endpoint lookup would miss those sessions.
-            let Ok(collection): Result<IMMDeviceCollection, _> =
-                enumerator.EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE)
-            else {
-                eprintln!("[MicDetect] FAIL: EnumAudioEndpoints");
-                return false;
-            };
+            // LastUsedTimeStart must be non-zero — proves the process has
+            // actually opened the mic at least once in this session.
+            let start: Vec<u8> = subkey
+                .get_raw_value("LastUsedTimeStart")
+                .map(|v| v.bytes)
+                .unwrap_or_default();
 
-            let Ok(device_count) = collection.GetCount() else {
-                eprintln!("[MicDetect] FAIL: collection GetCount");
-                return false;
-            };
-
-            eprintln!("[MicDetect] capture endpoint count = {device_count}");
-
-            for d in 0..device_count {
-                let Ok(device) = collection.Item(d) else { continue; };
-
-                let Ok(manager): Result<IAudioSessionManager2, _> =
-                    device.Activate(CLSCTX_ALL, None)
-                else {
-                    continue;
-                };
-
-                let Ok(sessions) = manager.GetSessionEnumerator() else { continue; };
-                let Ok(count) = sessions.GetCount() else { continue; };
-
-                eprintln!("[MicDetect] endpoint {d}: session count = {count}");
-
-                for i in 0..count {
-                    let Ok(session): Result<IAudioSessionControl, _> = sessions.GetSession(i)
-                    else {
-                        continue;
-                    };
-
-                    let Ok(s2): Result<IAudioSessionControl2, _> = session.cast() else {
-                        continue;
-                    };
-
-                    let Ok(pid) = s2.GetProcessId() else { continue; };
-
-                    let name =
-                        get_process_name_by_pid(pid).unwrap_or_else(|| format!("pid:{pid}"));
-                    let state = session.GetState().ok();
-                    eprintln!(
-                        "[MicDetect] endpoint {d} session {i}: pid={pid} name={name} state={state:?}"
-                    );
-
-                    if BROWSERS.contains(&name.to_ascii_lowercase().as_str()) {
-                        return true;
-                    }
-                }
+            if start.iter().all(|&b| b == 0) {
+                continue;
             }
 
-            false
+            // LastUsedTimeStop == all-zeros (or missing) → mic still open.
+            // A non-zero value is a FILETIME recording when the mic was closed.
+            let stop: Vec<u8> = subkey
+                .get_raw_value("LastUsedTimeStop")
+                .map(|v| v.bytes)
+                .unwrap_or_default();
+
+            if !stop.iter().all(|&b| b == 0) {
+                continue;
+            }
+
+            // Key name is the exe path with backslashes replaced by '#'.
+            // e.g. "C:#Program Files#...#brave.exe" or "C:#...#zoom.exe#Session:1"
+            // We want the last segment ending in ".exe".
+            if let Some(exe) = subkey_name
+                .split('#')
+                .rev()
+                .find(|s| s.to_ascii_lowercase().ends_with(".exe"))
+            {
+                let name = exe.to_ascii_lowercase();
+                eprintln!("[MicDetect] registry active: {name}");
+                result.push(name);
+            }
         }
+
+        result
     }
 
     /// Returns the exe names of all currently running processes.
@@ -386,26 +327,34 @@ pub mod windows_scan {
 /// Detects whether any meeting is currently active.
 /// Returns Some(platform_name) or None.
 ///
-/// Detection is purely signal-based — no window title reading:
-/// 1. Native apps (Zoom, Teams, etc.) → detected by process name
-/// 2. Browser calls (Google Meet, etc.) → detected by WASAPI mic ownership.
-///    The browser opens the capture device only when the user clicks "Join",
-///    so this fires at exactly the right moment regardless of tab focus or URL.
+/// Detection strategy (in priority order):
+/// 1. OS registry mic consent store → which process is actively holding the mic.
+///    Device-agnostic: works regardless of which mic the browser/app selected.
+///    Process-precise: identifies the exact exe, no audio stream analysis needed.
+/// 2. Process name scan → fallback for native apps that may not have touched
+///    the mic yet (e.g. joining a Zoom call before unmuting).
 #[cfg(target_os = "windows")]
 pub fn detect_active_meeting() -> Option<String> {
-    let processes = windows_scan::list_process_names();
+    // 1. Registry: who is holding the mic open right now?
+    let mic_procs = windows_scan::active_mic_processes_registry();
 
-    // 1. Native meeting apps — process name is unambiguous
-    if let Some(platform) = find_meeting_in_processes(&processes) {
+    // Known meeting app is actively using the mic — strongest signal.
+    if let Some(platform) = find_meeting_in_processes(&mic_procs) {
         return Some(platform);
     }
 
-    // 2. Browser holds an open mic capture session = call in progress.
-    //    We check for session existence (not Active state) because browsers
-    //    keep the mic endpoint open for the entire call — Active/Inactive only
-    //    reflects whether audio is literally flowing at this instant.
-    if windows_scan::browser_has_mic_session() {
-        return Some("Meeting".to_string());
+    // Browser is using the mic — likely a web call (Meet, Teams web, etc.).
+    for name in &mic_procs {
+        if BROWSER_PROCESSES.contains(&name.as_str()) {
+            return Some("Meeting".to_string());
+        }
+    }
+
+    // 2. Fallback: native meeting app is running (may be muted / in lobby).
+    //    Less precise than mic-usage, but catches the join→unmute gap.
+    let all_procs = windows_scan::list_process_names();
+    if let Some(platform) = find_meeting_in_processes(&all_procs) {
+        return Some(platform);
     }
 
     None
